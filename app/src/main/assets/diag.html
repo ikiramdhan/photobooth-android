@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diagnosa kamera USB</title>
+<style>
+  body{margin:0;font-family:sans-serif;background:#e9eef5;color:#0f1420;padding:20px;max-width:760px}
+  h1{font-size:22px;margin:0 0 4px}
+  p{color:#555f70;line-height:1.5;margin:6px 0 16px}
+  .card{background:#fff;border:1px solid #d6dce6;border-radius:12px;padding:14px;margin:0 0 12px}
+  .card b{display:block;font-size:16px}
+  .meta{color:#555f70;font-size:13px;margin:2px 0 10px}
+  button,a.b{font:inherit;font-weight:700;border:0;border-radius:12px;padding:14px 18px;min-height:48px;background:#2563eb;color:#fff;margin:0 8px 8px 0;display:inline-block;text-decoration:none}
+  button.g,a.g{background:#fff;color:#0f1420;border:1px solid #8a93a3}
+  textarea{width:100%;box-sizing:border-box;height:220px;border:1px solid #8a93a3;border-radius:12px;padding:10px;font:12px monospace}
+  .ok{color:#1a6b34;font-weight:700}.bad{color:#b42318;font-weight:700}
+</style>
+</head>
+<body>
+<h1>Diagnosa kamera USB</h1>
+<p>Colok kamera ke tablet lewat kabel OTG, nyalakan kamera, lalu tekan Segarkan. Kamera Canon dan perangkat foto USB lain akan muncul di bawah.</p>
+<div id="status" class="card">Memeriksa...</div>
+<div id="list"></div>
+<button id="refresh">Segarkan</button>
+<a class="b g" href="pbapp://booth">Kembali ke booth</a>
+<p>Hasil pembacaan (tekan lama untuk menyalin, lalu kirim ke Claude):</p>
+<textarea id="out" readonly></textarea>
+<script>
+var out = document.getElementById('out'), list = document.getElementById('list'), st = document.getElementById('status');
+var log = [];
+function put(x){ log.push(x); out.value = log.join('\n\n'); out.scrollTop = out.scrollHeight; }
+function render(){
+  if(!window.PBCamera){ st.innerHTML = '<span class="bad">Halaman ini harus dibuka di aplikasi Photobooth.</span>'; return; }
+  var d = JSON.parse(PBCamera.list());
+  st.innerHTML = 'Aplikasi versi ' + PBCamera.version() + '. ' + (d.length ? '<span class="ok">' + d.length + ' perangkat foto terdeteksi.</span>' : '<span class="bad">Belum ada kamera terdeteksi.</span>');
+  list.innerHTML = '';
+  d.forEach(function(x){
+    var c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = '<b></b><div class="meta"></div>';
+    c.querySelector('b').textContent = x.name + (x.canon ? ' (Canon)' : '');
+    c.querySelector('.meta').textContent = 'ID USB ' + x.vid + ':' + x.pid + ' | izin: ' + (x.permitted ? 'sudah' : 'belum');
+    var b1 = document.createElement('button'); b1.textContent = 'Izinkan'; b1.className = x.permitted ? 'g' : '';
+    b1.onclick = function(){ PBCamera.request(x.id); };
+    var b2 = document.createElement('button'); b2.textContent = 'Baca info kamera';
+    b2.onclick = function(){ put('Membaca ' + x.name + ' ...'); PBCamera.info(x.id, String(x.id)); };
+    c.appendChild(b1); c.appendChild(b2); list.appendChild(c);
+  });
+}
+window.onPBInfo = function(id, r){ put(JSON.stringify(r, null, 1)); };
+window.addEventListener('pb-usb', render);
+document.getElementById('refresh').onclick = function(){ render(); put('Disegarkan: ' + (window.PBCamera ? PBCamera.list() : 'tanpa aplikasi')); };
+render();
+</script>
+</body>
+</html>

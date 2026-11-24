@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="Photobooth"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
+        </activity>
+    </application>
+</manifest>
