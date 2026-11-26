@@ -53,8 +53,22 @@ class MainActivity : Activity() {
             }.start()
         }
 
+        /** Jepret dengan Canon USB. Hasil dikirim ke window.onPBCapture(reqId, json); foto ada di /__pbcam/last.jpg. */
         @JavascriptInterface
-        fun version(): String = "0.1.0"
+        fun capture(reqId: String) {
+            Thread {
+                val json = usb.capture(java.io.File(cacheDir, "pbcam"))
+                runOnUiThread {
+                    web.evaluateJavascript(
+                        "window.onPBCapture && window.onPBCapture(" + org.json.JSONObject.quote(reqId) + "," + json + ")",
+                        null,
+                    )
+                }
+            }.start()
+        }
+
+        @JavascriptInterface
+        fun version(): String = "0.2.0"
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -83,6 +97,21 @@ class MainActivity : Activity() {
             @Deprecated("Untuk Android lama")
             override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
                 handleUrl(view, Uri.parse(url))
+
+            /** Sajikan foto kamera dari berkas lokal sebagai https://HOST/__pbcam/last.jpg (satu origin dengan booth). */
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): android.webkit.WebResourceResponse? {
+                val u = request.url
+                if (u.scheme == "https" && u.host == HOST && u.path == "/__pbcam/last.jpg") {
+                    val f = java.io.File(cacheDir, "pbcam/last.jpg")
+                    if (f.isFile) {
+                        val r = android.webkit.WebResourceResponse("image/jpeg", null, java.io.FileInputStream(f))
+                        r.responseHeaders = mapOf("Cache-Control" to "no-store")
+                        return r
+                    }
+                    return android.webkit.WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), java.io.ByteArrayInputStream(ByteArray(0)))
+                }
+                return null
+            }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) showError(view)

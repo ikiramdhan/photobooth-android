@@ -15,19 +15,21 @@ class Ptp(
     class Reply(val code: Int, val data: ByteArray)
 
     private var tid = 0
-    private var pending = ByteArray(0)
+    private var pending = ByteArray(1 shl 18)
+    private var pLen = 0
 
     private fun u16(b: ByteArray, o: Int) = (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8)
     private fun u32(b: ByteArray, o: Int) =
         (b[o].toInt() and 0xFF) or ((b[o + 1].toInt() and 0xFF) shl 8) or
             ((b[o + 2].toInt() and 0xFF) shl 16) or ((b[o + 3].toInt() and 0xFF) shl 24)
 
+    /** Pastikan minimal n byte sudah ada di buffer. Buffer membesar bertahap, tanpa menyalin ulang tiap paket. */
     private fun fill(n: Int) {
-        while (pending.size < n) {
-            val tmp = ByteArray(65536)
-            val r = conn.bulkTransfer(inEp, tmp, tmp.size, 5000)
+        while (pLen < n) {
+            if (pending.size - pLen < 65536) pending = pending.copyOf(maxOf(pending.size * 2, pLen + 65536))
+            val r = conn.bulkTransfer(inEp, pending, pLen, 65536, 8000)
             if (r < 0) throw IOException("USB tidak merespons (timeout)")
-            if (r > 0) pending += tmp.copyOf(r)
+            pLen += r
         }
     }
 
@@ -39,9 +41,13 @@ class Ptp(
         val type = u16(pending, 4)
         val code = u16(pending, 6)
         val payload = pending.copyOfRange(12, len)
-        pending = pending.copyOfRange(len, pending.size)
+        System.arraycopy(pending, len, pending, 0, pLen - len)
+        pLen -= len
         return Triple(type, code, payload)
     }
+
+    /** Buang sisa data lama di buffer (dipakai setelah error). */
+    fun reset() { pLen = 0 }
 
     /** Kirim satu perintah, lalu baca data (kalau ada) sampai balasan akhir. */
     fun command(code: Int, vararg params: Int): Reply {
@@ -55,12 +61,12 @@ class Ptp(
         val out = bb.array()
         val w = conn.bulkTransfer(outEp, out, out.size, 5000)
         if (w < 0) throw IOException("Gagal mengirim perintah ke kamera")
-        var data = ByteArray(0)
+        val data = java.io.ByteArrayOutputStream()
         while (true) {
             val (type, c, payload) = nextContainer()
             when (type) {
-                2 -> data += payload
-                3 -> return Reply(c, data)
+                2 -> data.write(payload)
+                3 -> { tid++; return Reply(c, data.toByteArray()) }
                 else -> {}
             }
         }
@@ -68,15 +74,33 @@ class Ptp(
 
     fun openSession(): Int {
         tid = 0
-        val r = command(0x1002, 1)
-        tid = 1
-        return r.code
+        return command(0x1002, 1).code
     }
 
-    fun closeSession(): Int {
-        val r = command(0x1003)
-        tid++
-        return r.code
+    fun closeSession(): Int = command(0x1003).code
+
+    // ---- Ekstensi Canon EOS ----
+    class Added(val oid: Int, val format: Int, val name: String)
+
+    /** Baca event Canon (0x9116) dan ambil objek baru yang tercatat. */
+    fun canonAdded(): List<Added> {
+        val r = command(0x9116)
+        val d = r.data
+        val out = ArrayList<Added>()
+        var o = 0
+        while (o + 8 <= d.size) {
+            val sz = u32(d, o)
+            val t = u32(d, o + 4)
+            if (sz < 8 || o + sz > d.size) break
+            if ((t == 0xC181 || t == 0xC1A7) && o + 40 < d.size) {
+                val nameOff = o + if (t == 0xC181) 32 else 40
+                var e = nameOff
+                while (e < o + sz && d[e].toInt() != 0) e++
+                out.add(Added(u32(d, o + 8), u16(d, o + 16), String(d, nameOff, maxOf(0, e - nameOff), Charsets.US_ASCII)))
+            }
+            o += sz
+        }
+        return out
     }
 
     class DeviceInfo(
@@ -88,7 +112,6 @@ class Ptp(
     )
 
     fun deviceInfo(): DeviceInfo {
-        tid = 0
         val r = command(0x1001)
         if (r.code != 0x2001) throw IOException("GetDeviceInfo ditolak (kode 0x" + r.code.toString(16) + ")")
         val b = ByteBuffer.wrap(r.data).order(ByteOrder.LITTLE_ENDIAN)
