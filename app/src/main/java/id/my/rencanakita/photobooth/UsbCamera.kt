@@ -191,7 +191,14 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             val ptp = Ptp(conn, inEp, outEp, intf.id)
             recoverTarget = ptp
             ptp.recover(false)
-            val code = try { ptp.openSession() } catch (e: Exception) { ptp.recover(); ptp.openSession() }
+            try { ptp.deviceInfo() } catch (_: Exception) { ptp.reset() } // sama seperti Baca info: kamera Canon senang dibangunkan dulu
+            var code = try { ptp.openSession() } catch (_: Exception) { -1 }
+            if (code == -1) {
+                ptp.reset(); Thread.sleep(500)
+                try { ptp.closeSession() } catch (_: Exception) {}
+                ptp.reset()
+                code = ptp.openSession()
+            }
             if (code != 0x2001 && code != 0x201E) throw java.io.IOException("Sesi kamera ditolak (0x" + code.toString(16) + ")")
             // Mode remote Canon: kamera menerima perintah rana dan mengirim event file baru.
             val rm = ptp.command(0x9114, 1)
@@ -200,7 +207,7 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             try { ptp.canonAdded() } catch (_: Exception) {}
             return Sess(d.deviceId, conn, intf, ptp)
         } catch (e: Exception) {
-            try { recoverTarget?.recover() } catch (_: Exception) {}
+            try { recoverTarget?.recover(false) } catch (_: Exception) {}
             try { claimedIntf?.let { conn.releaseInterface(it) } } catch (_: Exception) {}
             try { conn.close() } catch (_: Exception) {}
             throw e
@@ -257,7 +264,7 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             val s0 = sess
             sess = null
             if (s0 != null) {
-                try { s0.ptp.recover() } catch (_: Exception) {}
+                try { s0.ptp.recover(false) } catch (_: Exception) {}
                 try { s0.conn.releaseInterface(s0.intf) } catch (_: Exception) {}
                 try { s0.conn.close() } catch (_: Exception) {}
             }
