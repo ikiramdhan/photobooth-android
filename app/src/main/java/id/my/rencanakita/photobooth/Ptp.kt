@@ -48,9 +48,9 @@ class Ptp(
     }
 
     /** Pulihkan kamera yang macet: reset perangkat PTP dan buka blokir endpoint. Aman dipanggil kapan saja. */
-    fun recover() {
+    fun recover(full: Boolean = true) {
         pLen = 0
-        try { conn.controlTransfer(0x21, 0x66, 0, intfNum, null, 0, 2000) } catch (_: Exception) {} // Device Reset
+        if (full) try { conn.controlTransfer(0x21, 0x66, 0, intfNum, null, 0, 2000) } catch (_: Exception) {} // Device Reset
         for (ep in arrayOf(inEp, outEp)) {
             try { conn.controlTransfer(0x02, 0x01, 0, ep.address, null, 0, 1000) } catch (_: Exception) {} // CLEAR_FEATURE(ENDPOINT_HALT)
         }
@@ -71,8 +71,9 @@ class Ptp(
         bb.putInt(tid)
         params.forEach { bb.putInt(it) }
         val out = bb.array()
-        val w = conn.bulkTransfer(outEp, out, out.size, 5000)
-        if (w < 0) throw IOException("Gagal mengirim perintah ke kamera")
+        var w = conn.bulkTransfer(outEp, out, out.size, 3000)
+        if (w < 0) { recover(true); w = conn.bulkTransfer(outEp, out, out.size, 3000) }
+        if (w < 0) throw IOException("Gagal mengirim perintah ke kamera (0x" + code.toString(16) + "). Matikan lalu nyalakan kamera, colok ulang kabel")
         val data = java.io.ByteArrayOutputStream()
         while (true) {
             val (type, c, payload) = nextContainer()

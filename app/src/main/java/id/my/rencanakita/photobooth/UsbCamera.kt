@@ -120,7 +120,7 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             }
             if (inEp == null || outEp == null) return err("Endpoint USB tidak lengkap.")
             val ptp = Ptp(conn, inEp, outEp, intf.id)
-            ptp.recover()
+            ptp.recover(false)
             val di = ptp.deviceInfo()
             val sess = ptp.openSession()
             val sessionOk = sess == 0x2001 || sess == 0x201E
@@ -190,7 +190,7 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             if (inEp == null || outEp == null) throw java.io.IOException("Endpoint USB tidak lengkap.")
             val ptp = Ptp(conn, inEp, outEp, intf.id)
             recoverTarget = ptp
-            ptp.recover()
+            ptp.recover(false)
             val code = try { ptp.openSession() } catch (e: Exception) { ptp.recover(); ptp.openSession() }
             if (code != 0x2001 && code != 0x201E) throw java.io.IOException("Sesi kamera ditolak (0x" + code.toString(16) + ")")
             // Mode remote Canon: kamera menerima perintah rana dan mengirim event file baru.
