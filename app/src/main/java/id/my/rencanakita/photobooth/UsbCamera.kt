@@ -119,7 +119,8 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
                 }
             }
             if (inEp == null || outEp == null) return err("Endpoint USB tidak lengkap.")
-            val ptp = Ptp(conn, inEp, outEp)
+            val ptp = Ptp(conn, inEp, outEp, intf.id)
+            ptp.recover()
             val di = ptp.deviceInfo()
             val sess = ptp.openSession()
             val sessionOk = sess == 0x2001 || sess == 0x201E
@@ -167,6 +168,8 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
 
     private fun openSess(d: UsbDevice): Sess {
         val conn = mgr.openDevice(d) ?: throw java.io.IOException("Tidak bisa membuka perangkat USB.")
+        var recoverTarget: Ptp? = null
+        var claimedIntf: android.hardware.usb.UsbInterface? = null
         try {
             var intf: android.hardware.usb.UsbInterface? = null
             for (i in 0 until d.interfaceCount) {
@@ -175,6 +178,7 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             }
             if (intf == null) throw java.io.IOException("Tidak ada antarmuka foto (PTP) pada kamera.")
             if (!conn.claimInterface(intf, true)) throw java.io.IOException("Gagal mengambil antarmuka USB.")
+            claimedIntf = intf
             var inEp: android.hardware.usb.UsbEndpoint? = null
             var outEp: android.hardware.usb.UsbEndpoint? = null
             for (e in 0 until intf.endpointCount) {
@@ -184,8 +188,10 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
                 }
             }
             if (inEp == null || outEp == null) throw java.io.IOException("Endpoint USB tidak lengkap.")
-            val ptp = Ptp(conn, inEp, outEp)
-            val code = ptp.openSession()
+            val ptp = Ptp(conn, inEp, outEp, intf.id)
+            recoverTarget = ptp
+            ptp.recover()
+            val code = try { ptp.openSession() } catch (e: Exception) { ptp.recover(); ptp.openSession() }
             if (code != 0x2001 && code != 0x201E) throw java.io.IOException("Sesi kamera ditolak (0x" + code.toString(16) + ")")
             // Mode remote Canon: kamera menerima perintah rana dan mengirim event file baru.
             val rm = ptp.command(0x9114, 1)
@@ -194,6 +200,8 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             try { ptp.canonAdded() } catch (_: Exception) {}
             return Sess(d.deviceId, conn, intf, ptp)
         } catch (e: Exception) {
+            try { recoverTarget?.recover() } catch (_: Exception) {}
+            try { claimedIntf?.let { conn.releaseInterface(it) } } catch (_: Exception) {}
             try { conn.close() } catch (_: Exception) {}
             throw e
         }
@@ -204,13 +212,16 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
      * Panggil dari thread latar. Mengembalikan JSON {ok, bytes, name} atau {ok:false, error}.
      */
     fun capture(dir: java.io.File): String = synchronized(lock) {
+        var step = "membuka sesi"
         try {
             val d = firstCanon() ?: return@synchronized err("Kamera Canon tidak terdeteksi. Cek kabel OTG.")
             if (!mgr.hasPermission(d)) return@synchronized err("Izin USB belum diberikan.")
             var s = sess
             if (s == null || s.id != d.deviceId) { closeSessLocked(); s = openSess(d); sess = s }
             val ptp = s.ptp
+            step = "membaca event"
             try { ptp.canonAdded() } catch (_: Exception) {} // buang event lama
+            step = "menekan rana"
             var r = ptp.command(0x9128, 3, 0)
             if (r.code != 0x2001) {
                 try { ptp.command(0x9129, 3) } catch (_: Exception) {}
@@ -219,6 +230,7 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             }
             try { ptp.command(0x9129, 3) } catch (_: Exception) {}
             if (r.code != 0x2001) return@synchronized err("Kamera tidak bisa menjepret (kode 0x" + r.code.toString(16) + "). Fokus gagal atau kamera sibuk.")
+            step = "menunggu foto"
             val deadline = System.currentTimeMillis() + 15000
             var got: Ptp.Added? = null
             var sawOther = false
@@ -234,6 +246,7 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
                     else "Foto dari kamera tidak datang. Pastikan kartu memori terpasang dan kualitas gambar JPEG.",
                 )
             }
+            step = "mengunduh foto"
             val obj = ptp.command(0x1009, got.oid)
             if (obj.code != 0x2001 || obj.data.isEmpty()) return@synchronized err("Gagal mengunduh foto dari kamera (0x" + obj.code.toString(16) + ").")
             try { ptp.command(0x9117, got.oid) } catch (_: Exception) {}
@@ -241,8 +254,14 @@ class UsbCamera(private val ctx: Context, private val onChange: () -> Unit) {
             java.io.File(dir, "last.jpg").writeBytes(obj.data)
             JSONObject().put("ok", true).put("bytes", obj.data.size).put("name", got.name).toString()
         } catch (e: Exception) {
-            closeSessLocked()
-            err(e.message ?: e.javaClass.simpleName)
+            val s0 = sess
+            sess = null
+            if (s0 != null) {
+                try { s0.ptp.recover() } catch (_: Exception) {}
+                try { s0.conn.releaseInterface(s0.intf) } catch (_: Exception) {}
+                try { s0.conn.close() } catch (_: Exception) {}
+            }
+            err("(" + step + ") " + (e.message ?: e.javaClass.simpleName))
         }
     }
 }

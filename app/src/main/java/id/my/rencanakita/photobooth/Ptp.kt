@@ -11,6 +11,7 @@ class Ptp(
     private val conn: UsbDeviceConnection,
     private val inEp: UsbEndpoint,
     private val outEp: UsbEndpoint,
+    private val intfNum: Int = 0,
 ) {
     class Reply(val code: Int, val data: ByteArray)
 
@@ -44,6 +45,17 @@ class Ptp(
         System.arraycopy(pending, len, pending, 0, pLen - len)
         pLen -= len
         return Triple(type, code, payload)
+    }
+
+    /** Pulihkan kamera yang macet: reset perangkat PTP dan buka blokir endpoint. Aman dipanggil kapan saja. */
+    fun recover() {
+        pLen = 0
+        try { conn.controlTransfer(0x21, 0x66, 0, intfNum, null, 0, 2000) } catch (_: Exception) {} // Device Reset
+        for (ep in arrayOf(inEp, outEp)) {
+            try { conn.controlTransfer(0x02, 0x01, 0, ep.address, null, 0, 1000) } catch (_: Exception) {} // CLEAR_FEATURE(ENDPOINT_HALT)
+        }
+        try { Thread.sleep(400) } catch (_: Exception) {}
+        tid = 0
     }
 
     /** Buang sisa data lama di buffer (dipakai setelah error). */
